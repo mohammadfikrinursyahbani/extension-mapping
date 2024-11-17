@@ -2,6 +2,7 @@ use polars::prelude::*;
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Serialize, FromPyObject)]
 struct Mapping {
@@ -10,7 +11,7 @@ struct Mapping {
     #[pyo3(item)]
     kolom: String,
     #[pyo3(item)]
-    label: i64,
+    label: String,
 }
 
 #[pyfunction]
@@ -20,14 +21,25 @@ fn a_times_b(
 ) -> PyResult<PyDataFrame> {
     let df = pydf.as_ref();
     
-    let mut conditions = Vec::new();
+    let mut column_conditions: HashMap<String, Vec<(i64, String)>> = HashMap::new();
     for map in mapping.iter() {
-        conditions.push(
-            when(col("id_responden").eq(lit(map.id_responden)))
-            .then(lit(map.label))
-            .otherwise(col(&map.kolom))
-            .alias(&map.kolom)
-        );
+        column_conditions
+            .entry(map.kolom.clone())
+            .or_default()
+            .push((map.id_responden, map.label.clone()));
+    }
+    
+    let mut conditions = Vec::new();
+    for (kolom, mappings) in column_conditions {
+        let mut case_expr = col(&kolom);
+        
+        for (id_resp, label) in mappings.iter().rev() {
+            case_expr = when(col("id_responden").eq(lit(*id_resp)))
+                .then(lit(label.as_str()))  // Pass string slice directly
+                .otherwise(case_expr);
+        }
+        
+        conditions.push(case_expr.alias(&kolom));
     }
 
     let new_df = df.clone().lazy()
